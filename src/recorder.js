@@ -4,7 +4,8 @@ export class Recorder {
   config = {
     bufferLen: 4096,
     numChannels: 2,
-    mimeType: 'audio/wav'
+    mimeType: 'audio/wav',
+    bitsPerSample: 16
   };
 
   recording = false;
@@ -20,14 +21,36 @@ export class Recorder {
     this.node = (this.context.createScriptProcessor ||
       this.context.createJavaScriptNode).call(this.context,
         this.config.bufferLen, this.config.numChannels, this.config.numChannels);
+    // Calculate our bitrate (constant across the recording session
+    // unless the sampleRate or our channel numbers change dynamically?)
+    this.bitRate = this.config.bitsPerSample * this.context.sampleRate * this.config.numChannels;
+    // num_seconds of a full buffer
+    this.bufferTimeChunk = this.config.bufferLen / this.context.sampleRate;
+    // Audio data accumulation object
+    // gathers info as the mic is recording
+    this.currentAudio = {
+      duration: 0,
+      size: 0
+    }
 
     this.node.onaudioprocess = (e) => {
       if (!this.recording) return;
 
       var buffer = [];
       for (var channel = 0; channel < this.config.numChannels; channel++) {
-        buffer.push(e.inputBuffer.getChannelData(channel));
+        var channelData = e.inputBuffer.getChannelData(channel)
+        this.currentAudio.buffer = channelData;
+        buffer.push(channelData);
       }
+      // Current amount of audio recorded in seconds
+      this.currentAudio.duration += this.bufferTimeChunk;
+      // File size in bits
+      var bitSize = (this.bitRate * this.currentAudio.duration);
+      // File size in bytes
+      var byteSize = bitSize / 8.0;
+      // the header offset is 44 bytes
+      var headerOffset = 44;
+      this.currentAudio.size = (byteSize + headerOffset) / 1024;
       this.worker.postMessage({
         command: 'record',
         buffer: buffer
@@ -207,6 +230,7 @@ export class Recorder {
 
 
   record() {
+    this.currentAudio.duration = 0;
     this.recording = true;
   }
 
